@@ -132,6 +132,14 @@
       display: none;
     }
 
+    .leaflet-coverage-pane {
+      z-index: 625;
+    }
+
+    .leaflet-tooltip-pane {
+      z-index: 760;
+    }
+
     .admin-tooltip {
       background: rgba(255, 255, 255, 0.94);
       border: 1px solid #cfd6dd;
@@ -325,6 +333,13 @@
       zoomControl: false,
       zoomSnap: 0.1
     });
+
+    map.createPane("coveragePane");
+    map.getPane("coveragePane").style.pointerEvents = "none";
+    map.getPane("coveragePane").style.zIndex = 625;
+    map.getPane("tooltipPane").style.zIndex = 760;
+
+    const coverageRenderer = L.svg({ pane: "coveragePane", padding: 0.35 });
 
     let baseStrokeZoom = null;
     let activeCityGb = null;
@@ -563,7 +578,7 @@
     function getCountyStyle(feature) {
       const style = getBoundaryStyle(countyStyle, "county", feature);
       return isCountyCovered(feature)
-        ? applyCoverageFill(style, COVERED_COUNTY_FILL, COVERED_COUNTY_FILL_OPACITY)
+        ? { ...style, fillOpacity: 0 }
         : style;
     }
 
@@ -627,22 +642,31 @@
       });
     }
 
-    function bringCoveredCountiesToFront() {
-      countyLayer.eachLayer(layer => {
-        if (isCountyCovered(layer.feature)) {
-          layer.bringToFront();
-        }
-      });
+    function getCoverageOverlayStyle(feature) {
+      const visible = isFeatureVisibleInActiveProvince(feature, "county") && isCountyCovered(feature);
+      return {
+        color: COVERED_COUNTY_FILL,
+        fill: true,
+        fillColor: COVERED_COUNTY_FILL,
+        fillOpacity: visible ? COVERED_COUNTY_FILL_OPACITY : 0,
+        interactive: false,
+        opacity: 0,
+        weight: 0
+      };
+    }
+
+    function refreshCoverageOverlay() {
+      coverageLayer.setStyle(getCoverageOverlayStyle);
     }
 
     function refreshAdministrativeStyles() {
       countyLayer.setStyle(getCountyStyle);
       cityLayer.setStyle(getCityStyle);
       provinceLayer.setStyle(getProvinceStyle);
+      refreshCoverageOverlay();
       updateCountyInteractivity();
       updateCityInteractivity();
       updateProvinceInteractivity();
-      bringCoveredCountiesToFront();
     }
 
     function closeAdministrativeTooltips() {
@@ -654,6 +678,14 @@
       });
       provinceLayer.eachLayer(layer => {
         layer.closeTooltip();
+      });
+    }
+
+    function closeLayerGroupTooltips(layerGroup, activeLayer) {
+      layerGroup.eachLayer(layer => {
+        if (layer !== activeLayer) {
+          layer.closeTooltip();
+        }
       });
     }
 
@@ -968,14 +1000,10 @@
           padding: [8 * scale, 8 * scale]
         });
 
-        const exportCountyLayer = addExportLayer(exportMap, exportRenderer, countyLayer, "county", getCountyStyle, scale);
+        addExportLayer(exportMap, exportRenderer, countyLayer, "county", getCountyStyle, scale);
         addExportLayer(exportMap, exportRenderer, cityLayer, "city", getCityStyle, scale);
         addExportLayer(exportMap, exportRenderer, provinceLayer, "province", getProvinceStyle, scale);
-        exportCountyLayer.eachLayer(layer => {
-          if (isCountyCovered(layer.feature)) {
-            layer.bringToFront();
-          }
-        });
+        addExportLayer(exportMap, exportRenderer, coverageLayer, "county", getCoverageOverlayStyle, scale);
 
         await waitForNextPaint();
 
@@ -1213,6 +1241,14 @@
       style: getCountyStyle
     }).addTo(map);
 
+    const coverageLayer = L.geoJSON(null, {
+      interactive: false,
+      pane: "coveragePane",
+      renderer: coverageRenderer,
+      smoothFactor: 0,
+      style: getCoverageOverlayStyle
+    }).addTo(map);
+
     function setupCityInteractions(feature, layer) {
       const cityName = getFeatureName(feature);
       if (cityName) {
@@ -1229,6 +1265,7 @@
           enterCity(layer);
         },
         mouseout: () => {
+          layer.closeTooltip();
           layer.setStyle(getCityStyle(feature));
         },
         mouseover: () => {
@@ -1236,6 +1273,7 @@
             layer.closeTooltip();
             return;
           }
+          closeLayerGroupTooltips(cityLayer, layer);
           layer.openTooltip();
           layer.bringToFront();
         },
@@ -1271,6 +1309,7 @@
           enterProvince(layer);
         },
         mouseout: () => {
+          layer.closeTooltip();
           layer.setStyle(getProvinceStyle(feature));
         },
         mouseover: () => {
@@ -1278,8 +1317,8 @@
             layer.closeTooltip();
             return;
           }
+          closeLayerGroupTooltips(provinceLayer, layer);
           layer.openTooltip();
-          layer.bringToFront();
         },
         tooltipopen: () => {
           if (isHoverSuppressed || activeProvinceGb || !isFeatureVisibleInActiveProvince(feature, "province")) {
@@ -1303,6 +1342,12 @@
     }
 
     map.on("zoomend", updateBoundaryWeights);
+    map.on("mouseout", event => {
+      const relatedTarget = event.originalEvent && event.originalEvent.relatedTarget;
+      if (!relatedTarget || !map.getContainer().contains(relatedTarget)) {
+        closeAdministrativeTooltips();
+      }
+    });
 
     if (SHOW_TDT_REFERENCE_BORDER) {
       tdtBorderLayer.on("tileerror", event => {
@@ -1523,6 +1568,7 @@
         const region = await fetchRegionMap(node.gb, 0);
         if (region.features && region.features.length) {
           countyLayer.addData(region);
+          coverageLayer.addData(region);
         }
         setProgress(++done, total);
       });
@@ -1530,6 +1576,7 @@
       countyLayer.bringToFront();
       cityLayer.bringToFront();
       provinceLayer.bringToFront();
+      coverageLayer.bringToFront();
       resetBounds = countyLayer.getBounds().extend(cityLayer.getBounds()).extend(provinceLayer.getBounds());
       baseStrokeZoom = map.getZoom();
       if (!restoreSavedProgress()) {
