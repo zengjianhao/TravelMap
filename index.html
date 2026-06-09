@@ -166,8 +166,8 @@
     const TDT_KEY = "a4a2856a7780c55db70d6d9622fb69e7";
     const CHINA_GB = "156000000";
     const CHINA_BOUNDS = [
-      [3.2, 72.5],
-      [54.8, 136.8]
+      [3.408477, 73.498962],
+      [53.558498, 135.087387]
     ];
     const RESET_VIEW_PADDING = [0, 0];
     const MAX_ZOOM_OFFSET = 5;
@@ -484,7 +484,6 @@
       cityLayer.bringToFront();
       provinceLayer.bringToFront();
       resetBounds = countyLayer.getBounds().extend(cityLayer.getBounds()).extend(provinceLayer.getBounds());
-      setResetView(false);
       baseStrokeZoom = map.getZoom();
       updateBoundaryWeights();
       setProgress(total, total);
