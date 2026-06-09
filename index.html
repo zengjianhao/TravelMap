@@ -102,7 +102,27 @@
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
+    .leaflet-container:focus,
+    .leaflet-interactive:focus {
+      outline: none;
+    }
+
     .leaflet-control-container {
+      display: none;
+    }
+
+    .province-tooltip {
+      background: rgba(255, 255, 255, 0.94);
+      border: 1px solid #cfd6dd;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(29, 43, 57, 0.12);
+      color: #26313c;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 5px 8px;
+    }
+
+    .province-tooltip::before {
       display: none;
     }
 
@@ -201,8 +221,10 @@
 
     const provinceStyle = {
       color: "#184e77",
-      fill: false,
-      interactive: false,
+      fill: true,
+      fillColor: "#184e77",
+      fillOpacity: 0,
+      interactive: true,
       opacity: 1,
       weight: BASE_STROKE_WEIGHTS.province
     };
@@ -224,6 +246,9 @@
     });
 
     let baseStrokeZoom = null;
+    let activeProvinceGb = null;
+    const provinceCityGbsByGb = new Map();
+    const provinceCountyGbsByGb = new Map();
     let resetBounds = L.latLngBounds(CHINA_BOUNDS);
 
     const zoomInButton = document.querySelector("#zoom-in");
@@ -251,17 +276,30 @@
       updateZoomControls();
     }
 
+    function clearProvinceSelection() {
+      if (!activeProvinceGb) return;
+      activeProvinceGb = null;
+      provinceLayer.eachLayer(layer => {
+        layer.closeTooltip();
+      });
+      refreshAdministrativeStyles();
+    }
+
     setResetView(false);
 
-    zoomInButton.addEventListener("click", () => {
+    zoomInButton.addEventListener("click", event => {
+      event.currentTarget.blur();
       map.zoomIn();
     });
 
-    zoomOutButton.addEventListener("click", () => {
+    zoomOutButton.addEventListener("click", event => {
+      event.currentTarget.blur();
       map.zoomOut();
     });
 
-    resetButton.addEventListener("click", () => {
+    resetButton.addEventListener("click", event => {
+      event.currentTarget.blur();
+      clearProvinceSelection();
       setResetView(true);
     });
 
@@ -281,30 +319,145 @@
       }
     );
 
+    function getFeatureGb(feature) {
+      return (feature.properties && feature.properties.gb) || "";
+    }
+
+    function getFeatureName(feature) {
+      return (feature.properties && feature.properties.name) || "";
+    }
+
+    function getBoundaryScale() {
+      const zoomScale = baseStrokeZoom === null ? 1 : map.getZoomScale(map.getZoom(), baseStrokeZoom);
+      return zoomScale ** STROKE_ZOOM_EXPONENT;
+    }
+
+    function getScaledBoundaryWeight(level) {
+      return BASE_STROKE_WEIGHTS[level] * getBoundaryScale();
+    }
+
+    function isFeatureVisibleInActiveProvince(feature, level) {
+      if (!activeProvinceGb) return true;
+
+      const gb = getFeatureGb(feature);
+      if (level === "province") return gb === activeProvinceGb;
+
+      const allowedGbs = level === "city"
+        ? provinceCityGbsByGb.get(activeProvinceGb)
+        : provinceCountyGbsByGb.get(activeProvinceGb);
+
+      return Boolean(allowedGbs && allowedGbs.has(gb));
+    }
+
+    function getBoundaryStyle(baseStyle, level, feature) {
+      const visible = isFeatureVisibleInActiveProvince(feature, level);
+      const style = {
+        ...baseStyle,
+        opacity: visible ? baseStyle.opacity : 0,
+        weight: getScaledBoundaryWeight(level)
+      };
+
+      if ("fillOpacity" in baseStyle) {
+        style.fillOpacity = visible ? baseStyle.fillOpacity : 0;
+      }
+
+      return style;
+    }
+
+    function getCountyStyle(feature) {
+      return getBoundaryStyle(countyStyle, "county", feature);
+    }
+
+    function getCityStyle(feature) {
+      return getBoundaryStyle(cityStyle, "city", feature);
+    }
+
+    function getProvinceStyle(feature) {
+      return getBoundaryStyle(provinceStyle, "province", feature);
+    }
+
+    function updateProvinceInteractivity() {
+      provinceLayer.eachLayer(layer => {
+        const element = layer.getElement();
+        if (element) {
+          const canInteract = !activeProvinceGb && isFeatureVisibleInActiveProvince(layer.feature, "province");
+          element.style.pointerEvents = canInteract ? "auto" : "none";
+        }
+      });
+    }
+
+    function refreshAdministrativeStyles() {
+      countyLayer.setStyle(getCountyStyle);
+      cityLayer.setStyle(getCityStyle);
+      provinceLayer.setStyle(getProvinceStyle);
+      updateProvinceInteractivity();
+    }
+
+    function enterProvince(layer) {
+      const provinceGb = getFeatureGb(layer.feature);
+      if (!provinceGb) return;
+
+      activeProvinceGb = provinceGb;
+      provinceLayer.eachLayer(provinceLayerItem => {
+        provinceLayerItem.closeTooltip();
+      });
+      refreshAdministrativeStyles();
+
+      const provinceBounds = layer.getBounds();
+      if (provinceBounds.isValid()) {
+        map.fitBounds(provinceBounds, {
+          animate: true,
+          padding: [8, 8]
+        });
+      }
+    }
+
     const countyLayer = L.geoJSON(null, {
       pane: "overlayPane",
       renderer: adminRenderer,
-      style: countyStyle
+      style: getCountyStyle
     }).addTo(map);
 
     const cityLayer = L.geoJSON(null, {
       pane: "overlayPane",
       renderer: adminRenderer,
-      style: cityStyle
+      style: getCityStyle
     }).addTo(map);
 
+    function setupProvinceInteractions(feature, layer) {
+      const provinceName = getFeatureName(feature);
+      if (provinceName) {
+        layer.bindTooltip(provinceName, {
+          className: "province-tooltip",
+          direction: "top",
+          sticky: true
+        });
+      }
+
+      layer.on({
+        click: () => {
+          enterProvince(layer);
+        },
+        mouseout: () => {
+          layer.setStyle(getProvinceStyle(feature));
+        },
+        mouseover: () => {
+          if (activeProvinceGb || !isFeatureVisibleInActiveProvince(feature, "province")) return;
+          layer.bringToFront();
+        }
+      });
+    }
+
     const provinceLayer = L.geoJSON(null, {
+      interactive: true,
+      onEachFeature: setupProvinceInteractions,
       pane: "overlayPane",
       renderer: adminRenderer,
-      style: provinceStyle
+      style: getProvinceStyle
     }).addTo(map);
 
     function updateBoundaryWeights() {
-      const zoomScale = baseStrokeZoom === null ? 1 : map.getZoomScale(map.getZoom(), baseStrokeZoom);
-      const scale = zoomScale ** STROKE_ZOOM_EXPONENT;
-      countyLayer.setStyle({ weight: BASE_STROKE_WEIGHTS.county * scale });
-      cityLayer.setStyle({ weight: BASE_STROKE_WEIGHTS.city * scale });
-      provinceLayer.setStyle({ weight: BASE_STROKE_WEIGHTS.province * scale });
+      refreshAdministrativeStyles();
     }
 
     map.on("zoomend", updateBoundaryWeights);
@@ -431,6 +584,32 @@
       );
     }
 
+    function collectLeafGbs(node) {
+      const children = node.children || [];
+      if (!children.length) return node.gb ? [node.gb] : [];
+
+      return children.flatMap(child => collectLeafGbs(child));
+    }
+
+    function indexProvinceChildren(root) {
+      provinceCityGbsByGb.clear();
+      provinceCountyGbsByGb.clear();
+
+      (root.children || []).forEach(province => {
+        if (!province.gb) return;
+
+        const cityGbs = new Set(
+          (province.children || [])
+            .filter(child => (child.children || []).length)
+            .map(child => child.gb)
+            .filter(Boolean)
+        );
+
+        provinceCityGbsByGb.set(province.gb, cityGbs);
+        provinceCountyGbsByGb.set(province.gb, new Set(collectLeafGbs(province)));
+      });
+    }
+
     function filterFeaturesByGb(region, allowedGbs) {
       return {
         ...region,
@@ -455,6 +634,7 @@
       const root = menu.data && menu.data[0];
       if (!root) throw new Error("Administrative menu is empty.");
 
+      indexProvinceChildren(root);
       const cityParents = collectCityRequestNodes(root);
       const countyParents = collectCountyRequestNodes(root);
       const total = cityParents.length + countyParents.length + 1;
