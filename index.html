@@ -200,7 +200,12 @@
             <path d="M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.2"></path>
           </svg>
         </button>
-        <button class="map-control" id="reset-map" type="button" aria-label="Reset map" title="重置">
+        <button class="map-control" id="home-map" type="button" aria-label="Back to home map" title="回到首页">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m3 10.5 9-7 9 7M5 9.5V21h5v-6h4v6h5V9.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+          </svg>
+        </button>
+        <button class="map-control" id="clear-coverage" type="button" aria-label="Clear all colored regions" title="清除上色" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
           </svg>
@@ -312,10 +317,15 @@
 
     const zoomInButton = document.querySelector("#zoom-in");
     const zoomOutButton = document.querySelector("#zoom-out");
-    const resetButton = document.querySelector("#reset-map");
+    const homeButton = document.querySelector("#home-map");
+    const clearCoverageButton = document.querySelector("#clear-coverage");
     const downloadImageButton = document.querySelector("#download-image");
     const mapFrame = document.querySelector("#map-frame");
     const mapPath = document.querySelector("#map-path");
+
+    function updateCoverageControls() {
+      clearCoverageButton.disabled = coveredCountyGbs.size === 0;
+    }
 
     function updateMapPath() {
       const parts = ["中国"];
@@ -387,10 +397,15 @@
       map.zoomOut();
     });
 
-    resetButton.addEventListener("click", event => {
+    homeButton.addEventListener("click", event => {
       event.currentTarget.blur();
       clearProvinceSelection();
       setResetView(true);
+    });
+
+    clearCoverageButton.addEventListener("click", event => {
+      event.currentTarget.blur();
+      clearCoverage();
     });
 
     downloadImageButton.addEventListener("click", event => {
@@ -646,11 +661,20 @@
       }
 
       updateCoveredCities();
+      updateCoverageControls();
       refreshAdministrativeStyles();
     }
 
     function toggleCountyCoverage(feature) {
       setCountyCoverage(feature, !isCountyCovered(feature));
+    }
+
+    function clearCoverage() {
+      if (!coveredCountyGbs.size) return;
+      coveredCountyGbs.clear();
+      updateCoveredCities();
+      updateCoverageControls();
+      refreshAdministrativeStyles();
     }
 
     function waitForNextPaint() {
