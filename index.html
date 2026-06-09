@@ -178,22 +178,38 @@
     const SHOW_TDT_REFERENCE_BORDER = false;
     const BLANK_TILE =
       "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+    const STROKE_ZOOM_EXPONENT = 0.6;
+    const BASE_STROKE_WEIGHTS = {
+      county: 0.3,
+      city: 0.4,
+      province: 0.78
+    };
 
     const countyStyle = {
-      color: "#68727d",
+      color: "#ced4da",
       fill: false,
       interactive: false,
-      opacity: 0.72,
-      weight: 0.48
+      opacity: 1,
+      weight: BASE_STROKE_WEIGHTS.county
     };
 
-    const outlineStyle = {
-      color: "#26313c",
+    const cityStyle = {
+      color: "#495057",
       fill: false,
       interactive: false,
-      opacity: 0.55,
-      weight: 0.9
+      opacity: 1,
+      weight: BASE_STROKE_WEIGHTS.city
     };
+
+    const provinceStyle = {
+      color: "#003049",
+      fill: false,
+      interactive: false,
+      opacity: 1,
+      weight: BASE_STROKE_WEIGHTS.province
+    };
+
+    const adminRenderer = L.svg({ padding: 0.35 });
 
     const map = L.map("map", {
       attributionControl: false,
@@ -201,14 +217,15 @@
       keyboard: false,
       maxZoom: 18,
       minZoom: 0,
-      preferCanvas: true,
-      renderer: L.canvas({ padding: 0.35 }),
+      preferCanvas: false,
+      renderer: adminRenderer,
       wheelPxPerZoomLevel: 80,
       zoomDelta: 0.5,
       zoomControl: false,
       zoomSnap: 0.1
     });
 
+    let baseStrokeZoom = null;
     let resetBounds = L.latLngBounds(CHINA_BOUNDS);
 
     const zoomInButton = document.querySelector("#zoom-in");
@@ -268,15 +285,31 @@
 
     const countyLayer = L.geoJSON(null, {
       pane: "overlayPane",
-      renderer: L.canvas({ padding: 0.35 }),
+      renderer: adminRenderer,
       style: countyStyle
     }).addTo(map);
 
-    const outlineLayer = L.geoJSON(null, {
+    const cityLayer = L.geoJSON(null, {
       pane: "overlayPane",
-      renderer: L.canvas({ padding: 0.35 }),
-      style: outlineStyle
+      renderer: adminRenderer,
+      style: cityStyle
     }).addTo(map);
+
+    const provinceLayer = L.geoJSON(null, {
+      pane: "overlayPane",
+      renderer: adminRenderer,
+      style: provinceStyle
+    }).addTo(map);
+
+    function updateBoundaryWeights() {
+      const zoomScale = baseStrokeZoom === null ? 1 : map.getZoomScale(map.getZoom(), baseStrokeZoom);
+      const scale = zoomScale ** STROKE_ZOOM_EXPONENT;
+      countyLayer.setStyle({ weight: BASE_STROKE_WEIGHTS.county * scale });
+      cityLayer.setStyle({ weight: BASE_STROKE_WEIGHTS.city * scale });
+      provinceLayer.setStyle({ weight: BASE_STROKE_WEIGHTS.province * scale });
+    }
+
+    map.on("zoomend", updateBoundaryWeights);
 
     if (SHOW_TDT_REFERENCE_BORDER) {
       tdtBorderLayer.on("tileerror", event => {
@@ -358,6 +391,18 @@
       }
     }
 
+    function collectCityRequestNodes(root) {
+      return (root.children || [])
+        .map(province => {
+          const cityChildren = (province.children || []).filter(child => (child.children || []).length);
+          return {
+            gb: province.gb,
+            cityGbs: new Set(cityChildren.map(child => child.gb))
+          };
+        })
+        .filter(node => node.gb && node.cityGbs.size);
+    }
+
     function collectCountyRequestNodes(root) {
       const nodes = [];
 
@@ -388,6 +433,13 @@
       );
     }
 
+    function filterFeaturesByGb(region, allowedGbs) {
+      return {
+        ...region,
+        features: (region.features || []).filter(feature => allowedGbs.has(feature.properties && feature.properties.gb))
+      };
+    }
+
     async function runWithLimit(items, limit, worker) {
       let current = 0;
       const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -405,13 +457,22 @@
       const root = menu.data && menu.data[0];
       if (!root) throw new Error("Administrative menu is empty.");
 
+      const cityParents = collectCityRequestNodes(root);
       const countyParents = collectCountyRequestNodes(root);
-      const total = countyParents.length + 1;
+      const total = cityParents.length + countyParents.length + 1;
       let done = 0;
 
-      const outline = await fetchRegionMap(CHINA_GB, 2);
-      outlineLayer.addData(outline);
+      const provinces = await fetchRegionMap(CHINA_GB, 2);
+      provinceLayer.addData(provinces);
       setProgress(++done, total);
+
+      await runWithLimit(cityParents, 10, async node => {
+        const region = filterFeaturesByGb(await fetchRegionMap(node.gb, 1), node.cityGbs);
+        if (region.features && region.features.length) {
+          cityLayer.addData(region);
+        }
+        setProgress(++done, total);
+      });
 
       await runWithLimit(countyParents, 10, async node => {
         const region = await fetchRegionMap(node.gb, 0);
@@ -422,9 +483,12 @@
       });
 
       countyLayer.bringToFront();
-      outlineLayer.bringToFront();
-      resetBounds = countyLayer.getBounds().extend(outlineLayer.getBounds());
+      cityLayer.bringToFront();
+      provinceLayer.bringToFront();
+      resetBounds = countyLayer.getBounds().extend(cityLayer.getBounds()).extend(provinceLayer.getBounds());
       setResetView(false);
+      baseStrokeZoom = map.getZoom();
+      updateBoundaryWeights();
       setProgress(total, total);
     }
 
