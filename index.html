@@ -126,6 +126,39 @@
       display: none;
     }
 
+    #map-path {
+      align-items: center;
+      bottom: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      font-size: 13px;
+      font-weight: 500;
+      gap: 0;
+      justify-content: flex-end;
+      line-height: 1.2;
+      max-width: calc(100% - 40px);
+      pointer-events: none;
+      position: absolute;
+      right: 20px;
+      text-align: right;
+      z-index: 700;
+    }
+
+    .map-path-item {
+      color: #748196;
+      white-space: nowrap;
+    }
+
+    .map-path-item[aria-current="page"] {
+      color: #344054;
+    }
+
+    .map-path-separator {
+      color: #98a2b3;
+      margin: 0 0.78em;
+      white-space: nowrap;
+    }
+
     #progress {
       background: rgba(52, 64, 84, 0.18);
       height: 3px;
@@ -174,6 +207,7 @@
         </button>
       </div>
       <div id="map" aria-label="Blank China county-level administrative map"></div>
+      <div id="map-path" aria-label="当前地图路径"></div>
     </div>
   </div>
 
@@ -252,7 +286,9 @@
 
     let baseStrokeZoom = null;
     let activeCityGb = null;
+    let activeCityName = null;
     let activeProvinceGb = null;
+    let activeProvinceName = null;
     let hoverRestoreHandler = null;
     let hoverRestoreTimer = null;
     let isHoverSuppressed = false;
@@ -265,6 +301,31 @@
     const zoomInButton = document.querySelector("#zoom-in");
     const zoomOutButton = document.querySelector("#zoom-out");
     const resetButton = document.querySelector("#reset-map");
+    const mapPath = document.querySelector("#map-path");
+
+    function updateMapPath() {
+      const parts = ["中国"];
+      if (activeProvinceName) parts.push(activeProvinceName);
+      if (activeCityName) parts.push(activeCityName);
+
+      mapPath.replaceChildren();
+      parts.forEach((part, index) => {
+        if (index > 0) {
+          const separator = document.createElement("span");
+          separator.className = "map-path-separator";
+          separator.textContent = "/";
+          mapPath.append(separator);
+        }
+
+        const item = document.createElement("span");
+        item.className = "map-path-item";
+        item.textContent = part;
+        if (index === parts.length - 1) {
+          item.setAttribute("aria-current", "page");
+        }
+        mapPath.append(item);
+      });
+    }
 
     function updateZoomControls() {
       const zoom = map.getZoom();
@@ -290,12 +351,16 @@
     function clearProvinceSelection() {
       if (!activeProvinceGb && !activeCityGb) return;
       activeCityGb = null;
+      activeCityName = null;
       activeProvinceGb = null;
+      activeProvinceName = null;
       isHoverSuppressed = false;
       closeAdministrativeTooltips();
+      updateMapPath();
       refreshAdministrativeStyles();
     }
 
+    updateMapPath();
     setResetView(false);
 
     zoomInButton.addEventListener("click", event => {
@@ -514,7 +579,10 @@
       if (!provinceGb) return;
 
       activeCityGb = null;
+      activeCityName = null;
       activeProvinceGb = provinceGb;
+      activeProvinceName = getFeatureName(layer.feature);
+      updateMapPath();
       refreshAdministrativeStyles();
 
       const provinceBounds = layer.getBounds();
@@ -531,6 +599,8 @@
       if (!cityGb) return;
 
       activeCityGb = cityGb;
+      activeCityName = getFeatureName(layer.feature);
+      updateMapPath();
       refreshAdministrativeStyles();
 
       const cityBounds = layer.getBounds();
