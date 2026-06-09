@@ -282,10 +282,12 @@
       city: 0.4,
       province: 0.78
     };
-    const COVERED_COUNTY_FILL = "#219ebc";
-    const COVERED_CITY_FILL = "#caf0f8";
+    const COVERED_COUNTY_FILL = "#800f2f";
+    const COVERED_CITY_FILL = "#ff4d6d";
+    const COVERED_PROVINCE_FILL = "#ffb3c1";
     const COVERED_COUNTY_FILL_OPACITY = 0.86;
-    const COVERED_CITY_FILL_OPACITY = 0.72;
+    const COVERED_CITY_FILL_OPACITY = 0.68;
+    const COVERED_PROVINCE_FILL_OPACITY = 0.46;
 
     const countyStyle = {
       color: "#ced4da",
@@ -352,10 +354,13 @@
     const provinceCityGbsByGb = new Map();
     const provinceCountyGbsByGb = new Map();
     const provinceDirectCountyGbsByGb = new Map();
+    const cityParentProvinceGbByGb = new Map();
     const cityCountyGbsByGb = new Map();
     const countyParentCityGbByGb = new Map();
+    const countyParentProvinceGbByGb = new Map();
     const coveredCountyGbs = new Set();
     const coveredCityGbs = new Set();
+    const coveredProvinceGbs = new Set();
     let resetBounds = L.latLngBounds(CHINA_BOUNDS);
 
     const zoomInButton = document.querySelector("#zoom-in");
@@ -567,6 +572,25 @@
       return coveredCityGbs.has(getFeatureGb(feature));
     }
 
+    function isProvinceCovered(feature) {
+      return coveredProvinceGbs.has(getFeatureGb(feature));
+    }
+
+    function isCityInCoveredProvince(feature) {
+      const provinceGb = cityParentProvinceGbByGb.get(getFeatureGb(feature));
+      return Boolean(provinceGb && coveredProvinceGbs.has(provinceGb));
+    }
+
+    function isDirectCountyInCoveredProvince(feature) {
+      const countyGb = getFeatureGb(feature);
+      const provinceGb = countyParentProvinceGbByGb.get(countyGb);
+      return Boolean(
+        provinceGb &&
+          coveredProvinceGbs.has(provinceGb) &&
+          countyParentCityGbByGb.get(countyGb) === provinceGb
+      );
+    }
+
     function applyCoverageFill(style, fillColor, fillOpacity) {
       return {
         ...style,
@@ -584,15 +608,19 @@
 
     function getCityStyle(feature) {
       const style = getBoundaryStyle(cityStyle, "city", feature);
-      return isCityCovered(feature)
-        ? applyCoverageFill(style, COVERED_CITY_FILL, COVERED_CITY_FILL_OPACITY)
+      if (isCityCovered(feature)) {
+        return applyCoverageFill(style, COVERED_CITY_FILL, COVERED_CITY_FILL_OPACITY);
+      }
+
+      return isCityInCoveredProvince(feature)
+        ? applyCoverageFill(style, COVERED_PROVINCE_FILL, COVERED_PROVINCE_FILL_OPACITY)
         : style;
     }
 
     function getProvinceStyle(feature) {
       const style = getBoundaryStyle(provinceStyle, "province", feature);
-      return isCityCovered(feature)
-        ? applyCoverageFill(style, COVERED_CITY_FILL, COVERED_CITY_FILL_OPACITY)
+      return isProvinceCovered(feature)
+        ? applyCoverageFill(style, COVERED_PROVINCE_FILL, COVERED_PROVINCE_FILL_OPACITY)
         : style;
     }
 
@@ -643,12 +671,17 @@
     }
 
     function getCoverageOverlayStyle(feature) {
-      const visible = isFeatureVisibleInActiveProvince(feature, "county") && isCountyCovered(feature);
+      const visible = isFeatureVisibleInActiveProvince(feature, "county");
+      const covered = isCountyCovered(feature);
+      const directCountyInCoveredProvince = isDirectCountyInCoveredProvince(feature);
+      const fillColor = covered ? COVERED_COUNTY_FILL : COVERED_PROVINCE_FILL;
+      const fillOpacity = covered ? COVERED_COUNTY_FILL_OPACITY : COVERED_PROVINCE_FILL_OPACITY;
+
       return {
-        color: COVERED_COUNTY_FILL,
+        color: fillColor,
         fill: true,
-        fillColor: COVERED_COUNTY_FILL,
-        fillOpacity: visible ? COVERED_COUNTY_FILL_OPACITY : 0,
+        fillColor,
+        fillOpacity: visible && (covered || directCountyInCoveredProvince) ? fillOpacity : 0,
         interactive: false,
         opacity: 0,
         weight: 0
@@ -736,11 +769,14 @@
       return true;
     }
 
-    function updateCoveredCities() {
+    function updateCoveredAdministrativeAreas() {
       coveredCityGbs.clear();
+      coveredProvinceGbs.clear();
       coveredCountyGbs.forEach(countyGb => {
         const cityGb = countyParentCityGbByGb.get(countyGb);
         if (cityGb) coveredCityGbs.add(cityGb);
+        const provinceGb = countyParentProvinceGbByGb.get(countyGb);
+        if (provinceGb) coveredProvinceGbs.add(provinceGb);
       });
     }
 
@@ -823,7 +859,7 @@
         ? getFeatureName(cityLayerToRestore.feature) || progress.activeCityName
         : null;
 
-      updateCoveredCities();
+      updateCoveredAdministrativeAreas();
       updateCoverageControls();
       updateMapPath();
       refreshAdministrativeStyles();
@@ -851,7 +887,7 @@
         coveredCountyGbs.delete(countyGb);
       }
 
-      updateCoveredCities();
+      updateCoveredAdministrativeAreas();
       updateCoverageControls();
       refreshAdministrativeStyles();
       saveProgress();
@@ -864,7 +900,7 @@
     function clearCoverage() {
       if (!coveredCountyGbs.size) return;
       coveredCountyGbs.clear();
-      updateCoveredCities();
+      updateCoveredAdministrativeAreas();
       updateCoverageControls();
       refreshAdministrativeStyles();
       saveProgress();
@@ -1482,8 +1518,10 @@
       provinceCityGbsByGb.clear();
       provinceCountyGbsByGb.clear();
       provinceDirectCountyGbsByGb.clear();
+      cityParentProvinceGbByGb.clear();
       cityCountyGbsByGb.clear();
       countyParentCityGbByGb.clear();
+      countyParentProvinceGbByGb.clear();
 
       (root.children || []).forEach(province => {
         if (!province.gb) return;
@@ -1496,7 +1534,12 @@
         );
 
         provinceCityGbsByGb.set(province.gb, cityGbs);
-        provinceCountyGbsByGb.set(province.gb, new Set(collectLeafGbs(province)));
+        const provinceCountyGbs = new Set(collectLeafGbs(province));
+        provinceCountyGbsByGb.set(province.gb, provinceCountyGbs);
+        provinceCountyGbs.forEach(countyGb => {
+          countyParentProvinceGbByGb.set(countyGb, province.gb);
+        });
+
         const directCountyGbs = new Set(
           (province.children || [])
             .filter(child => child.gb && !(child.children || []).length)
@@ -1513,6 +1556,7 @@
         (province.children || [])
           .filter(child => child.gb && (child.children || []).length)
           .forEach(city => {
+            cityParentProvinceGbByGb.set(city.gb, province.gb);
             const cityCountyGbs = new Set(collectLeafGbs(city));
             cityCountyGbsByGb.set(city.gb, cityCountyGbs);
             cityCountyGbs.forEach(countyGb => {
