@@ -205,8 +205,10 @@
 
     const countyStyle = {
       color: "#ced4da",
-      fill: false,
-      interactive: false,
+      fill: true,
+      fillColor: "#ced4da",
+      fillOpacity: 0,
+      interactive: true,
       opacity: 1,
       weight: BASE_STROKE_WEIGHTS.county
     };
@@ -256,6 +258,7 @@
     let isHoverSuppressed = false;
     const provinceCityGbsByGb = new Map();
     const provinceCountyGbsByGb = new Map();
+    const provinceDirectCountyGbsByGb = new Map();
     const cityCountyGbsByGb = new Map();
     let resetBounds = L.latLngBounds(CHINA_BOUNDS);
 
@@ -416,15 +419,41 @@
       });
     }
 
+    function canInteractWithCounty(feature) {
+      if (!isFeatureVisibleInActiveProvince(feature, "county")) return false;
+      if (activeCityGb) return true;
+      if (!activeProvinceGb) return false;
+
+      const directCountyGbs = provinceDirectCountyGbsByGb.get(activeProvinceGb);
+      return Boolean(directCountyGbs && directCountyGbs.has(getFeatureGb(feature)));
+    }
+
+    function canShowCountyTooltip(feature) {
+      return !isHoverSuppressed && canInteractWithCounty(feature);
+    }
+
+    function updateCountyInteractivity() {
+      countyLayer.eachLayer(layer => {
+        const element = layer.getElement();
+        if (element) {
+          element.style.pointerEvents = canInteractWithCounty(layer.feature) ? "auto" : "none";
+        }
+      });
+    }
+
     function refreshAdministrativeStyles() {
       countyLayer.setStyle(getCountyStyle);
       cityLayer.setStyle(getCityStyle);
       provinceLayer.setStyle(getProvinceStyle);
+      updateCountyInteractivity();
       updateCityInteractivity();
       updateProvinceInteractivity();
     }
 
     function closeAdministrativeTooltips() {
+      countyLayer.eachLayer(layer => {
+        layer.closeTooltip();
+      });
       cityLayer.eachLayer(layer => {
         layer.closeTooltip();
       });
@@ -513,7 +542,38 @@
       }
     }
 
+    function setupCountyInteractions(feature, layer) {
+      const countyName = getFeatureName(feature);
+      if (countyName) {
+        layer.bindTooltip(countyName, {
+          className: "admin-tooltip",
+          direction: "top",
+          sticky: true
+        });
+      }
+
+      layer.on({
+        mouseout: () => {
+          layer.setStyle(getCountyStyle(feature));
+        },
+        mouseover: () => {
+          if (!canShowCountyTooltip(feature)) {
+            layer.closeTooltip();
+            return;
+          }
+          layer.openTooltip();
+        },
+        tooltipopen: () => {
+          if (!canShowCountyTooltip(feature)) {
+            layer.closeTooltip();
+          }
+        }
+      });
+    }
+
     const countyLayer = L.geoJSON(null, {
+      interactive: true,
+      onEachFeature: setupCountyInteractions,
       pane: "overlayPane",
       renderer: adminRenderer,
       style: getCountyStyle
@@ -542,6 +602,7 @@
             layer.closeTooltip();
             return;
           }
+          layer.openTooltip();
           layer.bringToFront();
         },
         tooltipopen: () => {
@@ -582,6 +643,7 @@
             layer.closeTooltip();
             return;
           }
+          layer.openTooltip();
           layer.bringToFront();
         },
         tooltipopen: () => {
@@ -738,6 +800,7 @@
     function indexProvinceChildren(root) {
       provinceCityGbsByGb.clear();
       provinceCountyGbsByGb.clear();
+      provinceDirectCountyGbsByGb.clear();
       cityCountyGbsByGb.clear();
 
       (root.children || []).forEach(province => {
@@ -752,6 +815,14 @@
 
         provinceCityGbsByGb.set(province.gb, cityGbs);
         provinceCountyGbsByGb.set(province.gb, new Set(collectLeafGbs(province)));
+        provinceDirectCountyGbsByGb.set(
+          province.gb,
+          new Set(
+            (province.children || [])
+              .filter(child => child.gb && !(child.children || []).length)
+              .map(child => child.gb)
+          )
+        );
 
         (province.children || [])
           .filter(child => child.gb && (child.children || []).length)
