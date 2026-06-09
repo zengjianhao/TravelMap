@@ -111,7 +111,7 @@
       display: none;
     }
 
-    .province-tooltip {
+    .admin-tooltip {
       background: rgba(255, 255, 255, 0.94);
       border: 1px solid #cfd6dd;
       border-radius: 6px;
@@ -122,7 +122,7 @@
       padding: 5px 8px;
     }
 
-    .province-tooltip::before {
+    .admin-tooltip::before {
       display: none;
     }
 
@@ -213,8 +213,10 @@
 
     const cityStyle = {
       color: "#495057",
-      fill: false,
-      interactive: false,
+      fill: true,
+      fillColor: "#495057",
+      fillOpacity: 0,
+      interactive: true,
       opacity: 1,
       weight: BASE_STROKE_WEIGHTS.city
     };
@@ -246,9 +248,14 @@
     });
 
     let baseStrokeZoom = null;
+    let activeCityGb = null;
     let activeProvinceGb = null;
+    let hoverRestoreHandler = null;
+    let hoverRestoreTimer = null;
+    let isHoverSuppressed = false;
     const provinceCityGbsByGb = new Map();
     const provinceCountyGbsByGb = new Map();
+    const cityCountyGbsByGb = new Map();
     let resetBounds = L.latLngBounds(CHINA_BOUNDS);
 
     const zoomInButton = document.querySelector("#zoom-in");
@@ -277,11 +284,11 @@
     }
 
     function clearProvinceSelection() {
-      if (!activeProvinceGb) return;
+      if (!activeProvinceGb && !activeCityGb) return;
+      activeCityGb = null;
       activeProvinceGb = null;
-      provinceLayer.eachLayer(layer => {
-        layer.closeTooltip();
-      });
+      isHoverSuppressed = false;
+      closeAdministrativeTooltips();
       refreshAdministrativeStyles();
     }
 
@@ -337,9 +344,17 @@
     }
 
     function isFeatureVisibleInActiveProvince(feature, level) {
-      if (!activeProvinceGb) return true;
-
       const gb = getFeatureGb(feature);
+
+      if (activeCityGb) {
+        if (level === "province") return false;
+        if (level === "city") return gb === activeCityGb;
+
+        const allowedCountyGbs = cityCountyGbsByGb.get(activeCityGb);
+        return Boolean(allowedCountyGbs && allowedCountyGbs.has(gb));
+      }
+
+      if (!activeProvinceGb) return true;
       if (level === "province") return gb === activeProvinceGb;
 
       const allowedGbs = level === "city"
@@ -386,26 +401,111 @@
       });
     }
 
+    function updateCityInteractivity() {
+      cityLayer.eachLayer(layer => {
+        const element = layer.getElement();
+        if (element) {
+          const canInteract = Boolean(
+            activeProvinceGb &&
+              !activeCityGb &&
+              isFeatureVisibleInActiveProvince(layer.feature, "city")
+          );
+          element.style.pointerEvents = canInteract ? "auto" : "none";
+        }
+      });
+    }
+
     function refreshAdministrativeStyles() {
       countyLayer.setStyle(getCountyStyle);
       cityLayer.setStyle(getCityStyle);
       provinceLayer.setStyle(getProvinceStyle);
+      updateCityInteractivity();
       updateProvinceInteractivity();
+    }
+
+    function closeAdministrativeTooltips() {
+      cityLayer.eachLayer(layer => {
+        layer.closeTooltip();
+      });
+      provinceLayer.eachLayer(layer => {
+        layer.closeTooltip();
+      });
+    }
+
+    function restoreHoverAfterViewChange() {
+      if (hoverRestoreHandler !== null) {
+        map.off("moveend", hoverRestoreHandler);
+        hoverRestoreHandler = null;
+      }
+
+      if (hoverRestoreTimer !== null) {
+        window.clearTimeout(hoverRestoreTimer);
+        hoverRestoreTimer = null;
+      }
+      isHoverSuppressed = false;
+      closeAdministrativeTooltips();
+    }
+
+    function suppressHoverDuringViewChange(bounds) {
+      if (hoverRestoreHandler !== null) {
+        map.off("moveend", hoverRestoreHandler);
+        hoverRestoreHandler = null;
+      }
+
+      if (hoverRestoreTimer !== null) {
+        window.clearTimeout(hoverRestoreTimer);
+        hoverRestoreTimer = null;
+      }
+
+      isHoverSuppressed = true;
+      closeAdministrativeTooltips();
+
+      if (!bounds.isValid()) {
+        restoreHoverAfterViewChange();
+        return false;
+      }
+
+      const restoreHover = () => {
+        hoverRestoreHandler = null;
+        window.setTimeout(restoreHoverAfterViewChange, 80);
+      };
+
+      hoverRestoreHandler = restoreHover;
+      map.once("moveend", hoverRestoreHandler);
+      hoverRestoreTimer = window.setTimeout(() => {
+        restoreHoverAfterViewChange();
+      }, 1200);
+
+      return true;
     }
 
     function enterProvince(layer) {
       const provinceGb = getFeatureGb(layer.feature);
       if (!provinceGb) return;
 
+      activeCityGb = null;
       activeProvinceGb = provinceGb;
-      provinceLayer.eachLayer(provinceLayerItem => {
-        provinceLayerItem.closeTooltip();
-      });
       refreshAdministrativeStyles();
 
       const provinceBounds = layer.getBounds();
-      if (provinceBounds.isValid()) {
+      if (suppressHoverDuringViewChange(provinceBounds)) {
         map.fitBounds(provinceBounds, {
+          animate: true,
+          padding: [8, 8]
+        });
+      }
+    }
+
+    function enterCity(layer) {
+      const cityGb = getFeatureGb(layer.feature);
+      if (!cityGb) return;
+
+      activeCityGb = cityGb;
+      refreshAdministrativeStyles();
+
+      const cityBounds = layer.getBounds();
+      if (suppressHoverDuringViewChange(cityBounds)) {
+        map.fitBounds(cityBounds, {
           animate: true,
           padding: [8, 8]
         });
@@ -418,7 +518,42 @@
       style: getCountyStyle
     }).addTo(map);
 
+    function setupCityInteractions(feature, layer) {
+      const cityName = getFeatureName(feature);
+      if (cityName) {
+        layer.bindTooltip(cityName, {
+          className: "admin-tooltip",
+          direction: "top",
+          sticky: true
+        });
+      }
+
+      layer.on({
+        click: () => {
+          if (!activeProvinceGb || activeCityGb) return;
+          enterCity(layer);
+        },
+        mouseout: () => {
+          layer.setStyle(getCityStyle(feature));
+        },
+        mouseover: () => {
+          if (isHoverSuppressed || !activeProvinceGb || activeCityGb || !isFeatureVisibleInActiveProvince(feature, "city")) {
+            layer.closeTooltip();
+            return;
+          }
+          layer.bringToFront();
+        },
+        tooltipopen: () => {
+          if (isHoverSuppressed || !activeProvinceGb || activeCityGb || !isFeatureVisibleInActiveProvince(feature, "city")) {
+            layer.closeTooltip();
+          }
+        }
+      });
+    }
+
     const cityLayer = L.geoJSON(null, {
+      interactive: true,
+      onEachFeature: setupCityInteractions,
       pane: "overlayPane",
       renderer: adminRenderer,
       style: getCityStyle
@@ -428,7 +563,7 @@
       const provinceName = getFeatureName(feature);
       if (provinceName) {
         layer.bindTooltip(provinceName, {
-          className: "province-tooltip",
+          className: "admin-tooltip",
           direction: "top",
           sticky: true
         });
@@ -442,8 +577,16 @@
           layer.setStyle(getProvinceStyle(feature));
         },
         mouseover: () => {
-          if (activeProvinceGb || !isFeatureVisibleInActiveProvince(feature, "province")) return;
+          if (isHoverSuppressed || activeProvinceGb || !isFeatureVisibleInActiveProvince(feature, "province")) {
+            layer.closeTooltip();
+            return;
+          }
           layer.bringToFront();
+        },
+        tooltipopen: () => {
+          if (isHoverSuppressed || activeProvinceGb || !isFeatureVisibleInActiveProvince(feature, "province")) {
+            layer.closeTooltip();
+          }
         }
       });
     }
@@ -594,6 +737,7 @@
     function indexProvinceChildren(root) {
       provinceCityGbsByGb.clear();
       provinceCountyGbsByGb.clear();
+      cityCountyGbsByGb.clear();
 
       (root.children || []).forEach(province => {
         if (!province.gb) return;
@@ -607,6 +751,12 @@
 
         provinceCityGbsByGb.set(province.gb, cityGbs);
         provinceCountyGbsByGb.set(province.gb, new Set(collectLeafGbs(province)));
+
+        (province.children || [])
+          .filter(child => child.gb && (child.children || []).length)
+          .forEach(city => {
+            cityCountyGbsByGb.set(city.gb, new Set(collectLeafGbs(city)));
+          });
       });
     }
 
