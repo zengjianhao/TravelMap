@@ -236,6 +236,10 @@
       city: 0.4,
       province: 0.78
     };
+    const COVERED_COUNTY_FILL = "#219ebc";
+    const COVERED_CITY_FILL = "#caf0f8";
+    const COVERED_COUNTY_FILL_OPACITY = 0.86;
+    const COVERED_CITY_FILL_OPACITY = 0.72;
 
     const countyStyle = {
       color: "#ced4da",
@@ -296,6 +300,9 @@
     const provinceCountyGbsByGb = new Map();
     const provinceDirectCountyGbsByGb = new Map();
     const cityCountyGbsByGb = new Map();
+    const countyParentCityGbByGb = new Map();
+    const coveredCountyGbs = new Set();
+    const coveredCityGbs = new Set();
     let resetBounds = L.latLngBounds(CHINA_BOUNDS);
 
     const zoomInButton = document.querySelector("#zoom-in");
@@ -448,16 +455,41 @@
       return style;
     }
 
+    function isCountyCovered(feature) {
+      return coveredCountyGbs.has(getFeatureGb(feature));
+    }
+
+    function isCityCovered(feature) {
+      return coveredCityGbs.has(getFeatureGb(feature));
+    }
+
+    function applyCoverageFill(style, fillColor, fillOpacity) {
+      return {
+        ...style,
+        fillColor,
+        fillOpacity: style.opacity ? fillOpacity : 0
+      };
+    }
+
     function getCountyStyle(feature) {
-      return getBoundaryStyle(countyStyle, "county", feature);
+      const style = getBoundaryStyle(countyStyle, "county", feature);
+      return isCountyCovered(feature)
+        ? applyCoverageFill(style, COVERED_COUNTY_FILL, COVERED_COUNTY_FILL_OPACITY)
+        : style;
     }
 
     function getCityStyle(feature) {
-      return getBoundaryStyle(cityStyle, "city", feature);
+      const style = getBoundaryStyle(cityStyle, "city", feature);
+      return isCityCovered(feature)
+        ? applyCoverageFill(style, COVERED_CITY_FILL, COVERED_CITY_FILL_OPACITY)
+        : style;
     }
 
     function getProvinceStyle(feature) {
-      return getBoundaryStyle(provinceStyle, "province", feature);
+      const style = getBoundaryStyle(provinceStyle, "province", feature);
+      return isCityCovered(feature)
+        ? applyCoverageFill(style, COVERED_CITY_FILL, COVERED_CITY_FILL_OPACITY)
+        : style;
     }
 
     function updateProvinceInteractivity() {
@@ -506,6 +538,14 @@
       });
     }
 
+    function bringCoveredCountiesToFront() {
+      countyLayer.eachLayer(layer => {
+        if (isCountyCovered(layer.feature)) {
+          layer.bringToFront();
+        }
+      });
+    }
+
     function refreshAdministrativeStyles() {
       countyLayer.setStyle(getCountyStyle);
       cityLayer.setStyle(getCityStyle);
@@ -513,6 +553,7 @@
       updateCountyInteractivity();
       updateCityInteractivity();
       updateProvinceInteractivity();
+      bringCoveredCountiesToFront();
     }
 
     function closeAdministrativeTooltips() {
@@ -574,6 +615,32 @@
       return true;
     }
 
+    function updateCoveredCities() {
+      coveredCityGbs.clear();
+      coveredCountyGbs.forEach(countyGb => {
+        const cityGb = countyParentCityGbByGb.get(countyGb);
+        if (cityGb) coveredCityGbs.add(cityGb);
+      });
+    }
+
+    function setCountyCoverage(feature, isCovered) {
+      const countyGb = getFeatureGb(feature);
+      if (!countyGb) return;
+
+      if (isCovered) {
+        coveredCountyGbs.add(countyGb);
+      } else {
+        coveredCountyGbs.delete(countyGb);
+      }
+
+      updateCoveredCities();
+      refreshAdministrativeStyles();
+    }
+
+    function toggleCountyCoverage(feature) {
+      setCountyCoverage(feature, !isCountyCovered(feature));
+    }
+
     function enterProvince(layer) {
       const provinceGb = getFeatureGb(layer.feature);
       if (!provinceGb) return;
@@ -623,6 +690,10 @@
       }
 
       layer.on({
+        click: () => {
+          if (isHoverSuppressed || !canInteractWithCounty(feature)) return;
+          toggleCountyCoverage(feature);
+        },
         mouseout: () => {
           layer.setStyle(getCountyStyle(feature));
         },
@@ -872,6 +943,7 @@
       provinceCountyGbsByGb.clear();
       provinceDirectCountyGbsByGb.clear();
       cityCountyGbsByGb.clear();
+      countyParentCityGbByGb.clear();
 
       (root.children || []).forEach(province => {
         if (!province.gb) return;
@@ -885,19 +957,27 @@
 
         provinceCityGbsByGb.set(province.gb, cityGbs);
         provinceCountyGbsByGb.set(province.gb, new Set(collectLeafGbs(province)));
+        const directCountyGbs = new Set(
+          (province.children || [])
+            .filter(child => child.gb && !(child.children || []).length)
+            .map(child => child.gb)
+        );
         provinceDirectCountyGbsByGb.set(
           province.gb,
-          new Set(
-            (province.children || [])
-              .filter(child => child.gb && !(child.children || []).length)
-              .map(child => child.gb)
-          )
+          directCountyGbs
         );
+        directCountyGbs.forEach(countyGb => {
+          countyParentCityGbByGb.set(countyGb, province.gb);
+        });
 
         (province.children || [])
           .filter(child => child.gb && (child.children || []).length)
           .forEach(city => {
-            cityCountyGbsByGb.set(city.gb, new Set(collectLeafGbs(city)));
+            const cityCountyGbs = new Set(collectLeafGbs(city));
+            cityCountyGbsByGb.set(city.gb, cityCountyGbs);
+            cityCountyGbs.forEach(countyGb => {
+              countyParentCityGbByGb.set(countyGb, city.gb);
+            });
           });
       });
     }
