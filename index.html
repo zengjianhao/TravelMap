@@ -223,9 +223,9 @@
             <path d="M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.2"></path>
           </svg>
         </button>
-        <button class="map-control" id="home-map" type="button" aria-label="Back to home map" title="回到首页">
+        <button class="map-control" id="up-level-map" type="button" aria-label="Back to parent map level" title="回到上一层级" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="m3 10.5 9-7 9 7M5 9.5V21h5v-6h4v6h5V9.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+            <path d="M19 12H5m0 0 6-6M5 12l6 6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
           </svg>
         </button>
         <button class="map-control" id="clear-coverage" type="button" aria-label="Clear all colored regions" title="清除上色" disabled>
@@ -266,6 +266,9 @@
     const BLANK_TILE =
       "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
     const STROKE_ZOOM_EXPONENT = 0.6;
+    const EXPORT_IMAGE_SCALE = 8;
+    const EXPORT_CROP_PADDING = 18;
+    const EXPORT_CONTENT_THRESHOLD = 252;
     const BASE_STROKE_WEIGHTS = {
       county: 0.3,
       city: 0.4,
@@ -342,7 +345,7 @@
 
     const zoomInButton = document.querySelector("#zoom-in");
     const zoomOutButton = document.querySelector("#zoom-out");
-    const homeButton = document.querySelector("#home-map");
+    const upLevelButton = document.querySelector("#up-level-map");
     const clearCoverageButton = document.querySelector("#clear-coverage");
     const downloadImageButton = document.querySelector("#download-image");
     const mapFrame = document.querySelector("#map-frame");
@@ -350,6 +353,10 @@
 
     function updateCoverageControls() {
       clearCoverageButton.disabled = coveredCountyGbs.size === 0;
+    }
+
+    function updateHierarchyNavigationControl() {
+      upLevelButton.disabled = !activeProvinceGb && !activeCityGb;
     }
 
     function updateMapPath() {
@@ -374,6 +381,7 @@
         }
         mapPath.append(item);
       });
+      updateHierarchyNavigationControl();
     }
 
     function updateZoomControls() {
@@ -409,6 +417,36 @@
       refreshAdministrativeStyles();
     }
 
+    function fitAdministrativeLayer(layer) {
+      const bounds = layer.getBounds();
+      if (suppressHoverDuringViewChange(bounds)) {
+        map.fitBounds(bounds, {
+          animate: true,
+          padding: [8, 8]
+        });
+      }
+    }
+
+    function moveUpHierarchyLevel() {
+      if (activeCityGb) {
+        activeCityGb = null;
+        activeCityName = null;
+        updateMapPath();
+        refreshAdministrativeStyles();
+        saveProgress();
+
+        const activeProvinceLayer = findLayerByGb(provinceLayer, activeProvinceGb);
+        if (activeProvinceLayer) fitAdministrativeLayer(activeProvinceLayer);
+        return;
+      }
+
+      if (activeProvinceGb) {
+        clearProvinceSelection();
+        setResetView(true);
+        saveProgress();
+      }
+    }
+
     updateMapPath();
     setResetView(false);
 
@@ -422,11 +460,9 @@
       map.zoomOut();
     });
 
-    homeButton.addEventListener("click", event => {
+    upLevelButton.addEventListener("click", event => {
       event.currentTarget.blur();
-      clearProvinceSelection();
-      setResetView(true);
-      saveProgress();
+      moveUpHierarchyLevel();
     });
 
     clearCoverageButton.addEventListener("click", event => {
@@ -840,25 +876,15 @@
       });
     }
 
-    function loadSvgImage(svg) {
-      const clone = svg.cloneNode(true);
-      const rect = svg.getBoundingClientRect();
-
-      clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-      clone.setAttribute("width", rect.width);
-      clone.setAttribute("height", rect.height);
-      clone.removeAttribute("style");
-
-      const blob = new Blob([new XMLSerializer().serializeToString(clone)], {
-        type: "image/svg+xml;charset=utf-8"
-      });
+    function loadSvgImage(svgMarkup) {
+      const blob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
       const url = URL.createObjectURL(blob);
       const image = new Image();
 
       return new Promise((resolve, reject) => {
         image.addEventListener("load", () => {
           URL.revokeObjectURL(url);
-          resolve({ image, rect });
+          resolve(image);
         }, { once: true });
         image.addEventListener("error", () => {
           URL.revokeObjectURL(url);
@@ -866,6 +892,107 @@
         }, { once: true });
         image.src = url;
       });
+    }
+
+    function getExportStyle(styleFn, scale) {
+      return feature => {
+        const style = styleFn(feature);
+        return {
+          ...style,
+          interactive: false,
+          weight: style.weight * scale
+        };
+      };
+    }
+
+    function getVisibleExportGeoJson(sourceLayer, level) {
+      const geoJson = sourceLayer.toGeoJSON();
+      return {
+        ...geoJson,
+        features: (geoJson.features || []).filter(feature => isFeatureVisibleInActiveProvince(feature, level))
+      };
+    }
+
+    function addExportLayer(exportMap, exportRenderer, sourceLayer, level, styleFn, scale) {
+      return L.geoJSON(getVisibleExportGeoJson(sourceLayer, level), {
+        interactive: false,
+        renderer: exportRenderer,
+        smoothFactor: 0,
+        style: getExportStyle(styleFn, scale)
+      }).addTo(exportMap);
+    }
+
+    function getCurrentAdministrativeBounds() {
+      if (activeCityGb) {
+        const activeCityLayer = findLayerByGb(cityLayer, activeCityGb);
+        if (activeCityLayer) return activeCityLayer.getBounds();
+      }
+
+      if (activeProvinceGb) {
+        const activeProvinceLayer = findLayerByGb(provinceLayer, activeProvinceGb);
+        if (activeProvinceLayer) return activeProvinceLayer.getBounds();
+      }
+
+      return resetBounds;
+    }
+
+    async function renderExportMapSvg(width, height, scale) {
+      const container = document.createElement("div");
+      container.style.height = `${height}px`;
+      container.style.left = "-100000px";
+      container.style.opacity = "0";
+      container.style.pointerEvents = "none";
+      container.style.position = "fixed";
+      container.style.top = "0";
+      container.style.width = `${width}px`;
+      document.body.append(container);
+
+      const exportRenderer = L.svg({ padding: 0.35 });
+      const exportMap = L.map(container, {
+        attributionControl: false,
+        boxZoom: false,
+        fadeAnimation: false,
+        keyboard: false,
+        maxZoom: 24,
+        minZoom: 0,
+        preferCanvas: false,
+        renderer: exportRenderer,
+        zoomAnimation: false,
+        zoomControl: false,
+        zoomSnap: 0.1
+      });
+
+      try {
+        exportMap.fitBounds(getCurrentAdministrativeBounds(), {
+          animate: false,
+          padding: [8 * scale, 8 * scale]
+        });
+
+        const exportCountyLayer = addExportLayer(exportMap, exportRenderer, countyLayer, "county", getCountyStyle, scale);
+        addExportLayer(exportMap, exportRenderer, cityLayer, "city", getCityStyle, scale);
+        addExportLayer(exportMap, exportRenderer, provinceLayer, "province", getProvinceStyle, scale);
+        exportCountyLayer.eachLayer(layer => {
+          if (isCountyCovered(layer.feature)) {
+            layer.bringToFront();
+          }
+        });
+
+        await waitForNextPaint();
+
+        const svg = container.querySelector("svg");
+        if (!svg) throw new Error("Export map SVG was not rendered.");
+
+        const clone = svg.cloneNode(true);
+        clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+        clone.setAttribute("width", width);
+        clone.setAttribute("height", height);
+        clone.removeAttribute("style");
+
+        return new XMLSerializer().serializeToString(clone);
+      } finally {
+        exportMap.remove();
+        container.remove();
+      }
     }
 
     function drawMapPath(ctx, width, height) {
@@ -894,9 +1021,81 @@
       });
     }
 
+    function isExportContentPixel(data, index) {
+      if (data[index + 3] < 8) return false;
+
+      return (
+        data[index] < EXPORT_CONTENT_THRESHOLD ||
+        data[index + 1] < EXPORT_CONTENT_THRESHOLD ||
+        data[index + 2] < EXPORT_CONTENT_THRESHOLD
+      );
+    }
+
+    function getCanvasContentBounds(canvas) {
+      const ctx = canvas.getContext("2d");
+      const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      let minX = width;
+      let minY = height;
+      let maxX = -1;
+      let maxY = -1;
+
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const index = (y * width + x) * 4;
+          if (!isExportContentPixel(data, index)) continue;
+
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
+      }
+
+      return maxX === -1
+        ? null
+        : { minX, minY, maxX, maxY };
+    }
+
+    function cropCanvasToContent(canvas, scale) {
+      const bounds = getCanvasContentBounds(canvas);
+      if (!bounds) return canvas;
+
+      const padding = Math.round(EXPORT_CROP_PADDING * scale);
+      const sourceX = Math.max(0, bounds.minX - padding);
+      const sourceY = Math.max(0, bounds.minY - padding);
+      const sourceRight = Math.min(canvas.width, bounds.maxX + padding + 1);
+      const sourceBottom = Math.min(canvas.height, bounds.maxY + padding + 1);
+      const width = sourceRight - sourceX;
+      const height = sourceBottom - sourceY;
+      const croppedCanvas = document.createElement("canvas");
+      const croppedCtx = croppedCanvas.getContext("2d");
+
+      croppedCanvas.width = width;
+      croppedCanvas.height = height;
+      croppedCtx.fillStyle = "#ffffff";
+      croppedCtx.fillRect(0, 0, width, height);
+      croppedCtx.drawImage(canvas, sourceX, sourceY, width, height, 0, 0, width, height);
+
+      return croppedCanvas;
+    }
+
+    function drawExportFrame(canvas, scale) {
+      const ctx = canvas.getContext("2d");
+      const width = canvas.width / scale;
+      const height = canvas.height / scale;
+
+      ctx.save();
+      ctx.scale(scale, scale);
+      drawMapPath(ctx, width, height);
+      ctx.strokeStyle = "#d8dde3";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0.5, 0.5, width - 1, height - 1);
+      ctx.restore();
+    }
+
     async function renderCurrentViewCanvas() {
       const frameRect = mapFrame.getBoundingClientRect();
-      const scale = Math.min(window.devicePixelRatio || 1, 2);
+      const scale = EXPORT_IMAGE_SCALE;
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
 
@@ -906,23 +1105,14 @@
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, frameRect.width, frameRect.height);
 
-      for (const svg of document.querySelectorAll("#map svg")) {
-        const { image, rect } = await loadSvgImage(svg);
-        ctx.drawImage(
-          image,
-          rect.left - frameRect.left,
-          rect.top - frameRect.top,
-          rect.width,
-          rect.height
-        );
-      }
+      const exportSvgMarkup = await renderExportMapSvg(canvas.width, canvas.height, scale);
+      const exportMapImage = await loadSvgImage(exportSvgMarkup);
+      ctx.drawImage(exportMapImage, 0, 0, frameRect.width, frameRect.height);
 
-      drawMapPath(ctx, frameRect.width, frameRect.height);
-      ctx.strokeStyle = "#d8dde3";
-      ctx.lineWidth = 1;
-      ctx.strokeRect(0.5, 0.5, frameRect.width - 1, frameRect.height - 1);
+      const croppedCanvas = cropCanvasToContent(canvas, scale);
+      drawExportFrame(croppedCanvas, scale);
 
-      return canvas;
+      return croppedCanvas;
     }
 
     async function downloadCurrentViewImage() {
@@ -1019,6 +1209,7 @@
       onEachFeature: setupCountyInteractions,
       pane: "overlayPane",
       renderer: adminRenderer,
+      smoothFactor: 0,
       style: getCountyStyle
     }).addTo(map);
 
@@ -1061,6 +1252,7 @@
       onEachFeature: setupCityInteractions,
       pane: "overlayPane",
       renderer: adminRenderer,
+      smoothFactor: 0,
       style: getCityStyle
     }).addTo(map);
 
@@ -1102,6 +1294,7 @@
       onEachFeature: setupProvinceInteractions,
       pane: "overlayPane",
       renderer: adminRenderer,
+      smoothFactor: 0,
       style: getProvinceStyle
     }).addTo(map);
 
