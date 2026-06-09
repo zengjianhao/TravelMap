@@ -205,6 +205,11 @@
             <path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
           </svg>
         </button>
+        <button class="map-control" id="download-image" type="button" aria-label="Download current map image" title="下载图片">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3v10m0 0 4-4m-4 4-4-4M5 17v3h14v-3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+          </svg>
+        </button>
       </div>
       <div id="map" aria-label="Blank China county-level administrative map"></div>
       <div id="map-path" aria-label="当前地图路径"></div>
@@ -308,6 +313,8 @@
     const zoomInButton = document.querySelector("#zoom-in");
     const zoomOutButton = document.querySelector("#zoom-out");
     const resetButton = document.querySelector("#reset-map");
+    const downloadImageButton = document.querySelector("#download-image");
+    const mapFrame = document.querySelector("#map-frame");
     const mapPath = document.querySelector("#map-path");
 
     function updateMapPath() {
@@ -384,6 +391,11 @@
       event.currentTarget.blur();
       clearProvinceSelection();
       setResetView(true);
+    });
+
+    downloadImageButton.addEventListener("click", event => {
+      event.currentTarget.blur();
+      downloadCurrentViewImage();
     });
 
     map.on("zoomend zoomlevelschange resize", updateZoomControls);
@@ -639,6 +651,145 @@
 
     function toggleCountyCoverage(feature) {
       setCountyCoverage(feature, !isCountyCovered(feature));
+    }
+
+    function waitForNextPaint() {
+      return new Promise(resolve => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(resolve);
+        });
+      });
+    }
+
+    function getCurrentPathText() {
+      return ["中国", activeProvinceName, activeCityName].filter(Boolean).join("-");
+    }
+
+    function getImageFileName() {
+      const pathText = getCurrentPathText()
+        .replace(/[\\/:*?"<>|]+/g, "-")
+        .replace(/\s+/g, "-")
+        .replace(/-+/g, "-");
+      const today = new Date().toISOString().slice(0, 10);
+      return `travel-map-${pathText}-${today}.png`;
+    }
+
+    function downloadBlob(blob, fileName) {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function canvasToBlob(canvas) {
+      return new Promise(resolve => {
+        canvas.toBlob(resolve, "image/png");
+      });
+    }
+
+    function loadSvgImage(svg) {
+      const clone = svg.cloneNode(true);
+      const rect = svg.getBoundingClientRect();
+
+      clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      clone.setAttribute("width", rect.width);
+      clone.setAttribute("height", rect.height);
+      clone.removeAttribute("style");
+
+      const blob = new Blob([new XMLSerializer().serializeToString(clone)], {
+        type: "image/svg+xml;charset=utf-8"
+      });
+      const url = URL.createObjectURL(blob);
+      const image = new Image();
+
+      return new Promise((resolve, reject) => {
+        image.addEventListener("load", () => {
+          URL.revokeObjectURL(url);
+          resolve({ image, rect });
+        }, { once: true });
+        image.addEventListener("error", () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("Failed to render map SVG."));
+        }, { once: true });
+        image.src = url;
+      });
+    }
+
+    function drawMapPath(ctx, width, height) {
+      const parts = ["中国", activeProvinceName, activeCityName].filter(Boolean);
+      const tokens = parts.flatMap((part, index) => {
+        const item = {
+          color: index === parts.length - 1 ? "#344054" : "#748196",
+          text: part
+        };
+
+        return index === 0
+          ? [item]
+          : [{ color: "#98a2b3", text: " / " }, item];
+      });
+
+      ctx.font = "500 13px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+      ctx.textBaseline = "bottom";
+
+      let x = width - 20;
+      const y = height - 18;
+      [...tokens].reverse().forEach(token => {
+        const textWidth = ctx.measureText(token.text).width;
+        x -= textWidth;
+        ctx.fillStyle = token.color;
+        ctx.fillText(token.text, x, y);
+      });
+    }
+
+    async function renderCurrentViewCanvas() {
+      const frameRect = mapFrame.getBoundingClientRect();
+      const scale = Math.min(window.devicePixelRatio || 1, 2);
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+
+      canvas.width = Math.round(frameRect.width * scale);
+      canvas.height = Math.round(frameRect.height * scale);
+      ctx.scale(scale, scale);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, frameRect.width, frameRect.height);
+
+      for (const svg of document.querySelectorAll("#map svg")) {
+        const { image, rect } = await loadSvgImage(svg);
+        ctx.drawImage(
+          image,
+          rect.left - frameRect.left,
+          rect.top - frameRect.top,
+          rect.width,
+          rect.height
+        );
+      }
+
+      drawMapPath(ctx, frameRect.width, frameRect.height);
+      ctx.strokeStyle = "#d8dde3";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0.5, 0.5, frameRect.width - 1, frameRect.height - 1);
+
+      return canvas;
+    }
+
+    async function downloadCurrentViewImage() {
+      closeAdministrativeTooltips();
+      downloadImageButton.disabled = true;
+
+      try {
+        await waitForNextPaint();
+        const canvas = await renderCurrentViewCanvas();
+        const blob = await canvasToBlob(canvas);
+        if (blob) {
+          downloadBlob(blob, getImageFileName());
+        }
+      } finally {
+        downloadImageButton.disabled = false;
+      }
     }
 
     function enterProvince(layer) {
