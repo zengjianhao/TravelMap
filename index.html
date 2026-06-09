@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Blank China County Map</title>
+  <title>足迹地图</title>
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -31,14 +31,33 @@
       width: 100%;
     }
 
+    #map-shell {
+      display: grid;
+      gap: 12px;
+      transform: translateY(-48px);
+      width: min(858px, calc(100vw - 48px), calc(78vh * 11 / 10));
+    }
+
+    #page-title {
+      color: #26313c;
+      font-family: KaiTi, STKaiti, "KaiTi_GB2312", serif;
+      font-size: 24px;
+      font-weight: 600;
+      line-height: 1.2;
+      margin: 0;
+      pointer-events: none;
+      text-align: left;
+    }
+
     #map-frame {
       aspect-ratio: 11 / 10;
       background: #ffffff;
       border: 1px solid #d8dde3;
+      border-radius: 10px;
       box-shadow: 0 18px 48px rgba(29, 43, 57, 0.12);
       overflow: hidden;
       position: relative;
-      width: min(858px, calc(100vw - 48px), calc(78vh * 11 / 10));
+      width: 100%;
     }
 
     #map {
@@ -189,7 +208,9 @@
 </head>
 <body>
   <div id="app">
-    <div id="map-frame">
+    <div id="map-shell">
+      <h1 id="page-title">足迹地图</h1>
+      <div id="map-frame">
       <div id="progress" aria-hidden="true"><span></span></div>
       <div id="map-controls" aria-hidden="false">
         <button class="map-control" id="zoom-in" type="button" aria-label="Zoom in" title="放大">
@@ -220,6 +241,7 @@
       </div>
       <div id="map" aria-label="Blank China county-level administrative map"></div>
       <div id="map-path" aria-label="当前地图路径"></div>
+      </div>
     </div>
   </div>
 
