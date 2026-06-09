@@ -229,6 +229,7 @@
   <script>
     const TDT_KEY = "a4a2856a7780c55db70d6d9622fb69e7";
     const CHINA_GB = "156000000";
+    const PROGRESS_STORAGE_KEY = "travel-map-progress-v1";
     const CHINA_BOUNDS = [
       [3.408477, 73.498962],
       [53.558498, 135.087387]
@@ -401,6 +402,7 @@
       event.currentTarget.blur();
       clearProvinceSelection();
       setResetView(true);
+      saveProgress();
     });
 
     clearCoverageButton.addEventListener("click", event => {
@@ -650,6 +652,103 @@
       });
     }
 
+    function getProgressSnapshot() {
+      return {
+        activeCityGb,
+        activeCityName,
+        activeProvinceGb,
+        activeProvinceName,
+        coveredCountyGbs: Array.from(coveredCountyGbs),
+        version: 1
+      };
+    }
+
+    function readStoredProgress() {
+      try {
+        const rawProgress = localStorage.getItem(PROGRESS_STORAGE_KEY);
+        if (!rawProgress) return null;
+
+        const progress = JSON.parse(rawProgress);
+        if (!progress || progress.version !== 1) return null;
+
+        return {
+          activeCityGb: typeof progress.activeCityGb === "string" ? progress.activeCityGb : null,
+          activeCityName: typeof progress.activeCityName === "string" ? progress.activeCityName : null,
+          activeProvinceGb: typeof progress.activeProvinceGb === "string" ? progress.activeProvinceGb : null,
+          activeProvinceName: typeof progress.activeProvinceName === "string" ? progress.activeProvinceName : null,
+          coveredCountyGbs: Array.isArray(progress.coveredCountyGbs)
+            ? progress.coveredCountyGbs.filter(gb => typeof gb === "string")
+            : []
+        };
+      } catch (error) {
+        console.warn("Failed to read saved progress.", error);
+        return null;
+      }
+    }
+
+    function saveProgress() {
+      try {
+        localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(getProgressSnapshot()));
+      } catch (error) {
+        console.warn("Failed to save progress.", error);
+      }
+    }
+
+    function findLayerByGb(layerGroup, gb) {
+      let matchedLayer = null;
+      layerGroup.eachLayer(layer => {
+        if (!matchedLayer && getFeatureGb(layer.feature) === gb) {
+          matchedLayer = layer;
+        }
+      });
+      return matchedLayer;
+    }
+
+    function restoreSavedProgress() {
+      const progress = readStoredProgress();
+      if (!progress) return false;
+
+      coveredCountyGbs.clear();
+      progress.coveredCountyGbs.forEach(countyGb => {
+        if (countyParentCityGbByGb.has(countyGb)) {
+          coveredCountyGbs.add(countyGb);
+        }
+      });
+
+      const provinceLayerToRestore = progress.activeProvinceGb
+        ? findLayerByGb(provinceLayer, progress.activeProvinceGb)
+        : null;
+      const cityLayerToRestore = progress.activeCityGb
+        ? findLayerByGb(cityLayer, progress.activeCityGb)
+        : null;
+
+      activeProvinceGb = provinceLayerToRestore ? getFeatureGb(provinceLayerToRestore.feature) : null;
+      activeProvinceName = provinceLayerToRestore
+        ? getFeatureName(provinceLayerToRestore.feature) || progress.activeProvinceName
+        : null;
+      activeCityGb = activeProvinceGb && cityLayerToRestore ? getFeatureGb(cityLayerToRestore.feature) : null;
+      activeCityName = activeCityGb
+        ? getFeatureName(cityLayerToRestore.feature) || progress.activeCityName
+        : null;
+
+      updateCoveredCities();
+      updateCoverageControls();
+      updateMapPath();
+      refreshAdministrativeStyles();
+
+      const layerToRestore = cityLayerToRestore || provinceLayerToRestore;
+      if (layerToRestore) {
+        applyZoomLimits();
+        map.fitBounds(layerToRestore.getBounds(), {
+          animate: false,
+          padding: [8, 8]
+        });
+        updateZoomControls();
+      }
+
+      return true;
+    }
+
     function setCountyCoverage(feature, isCovered) {
       const countyGb = getFeatureGb(feature);
       if (!countyGb) return;
@@ -663,6 +762,7 @@
       updateCoveredCities();
       updateCoverageControls();
       refreshAdministrativeStyles();
+      saveProgress();
     }
 
     function toggleCountyCoverage(feature) {
@@ -675,6 +775,7 @@
       updateCoveredCities();
       updateCoverageControls();
       refreshAdministrativeStyles();
+      saveProgress();
     }
 
     function waitForNextPaint() {
@@ -826,6 +927,7 @@
       activeProvinceName = getFeatureName(layer.feature);
       updateMapPath();
       refreshAdministrativeStyles();
+      saveProgress();
 
       const provinceBounds = layer.getBounds();
       if (suppressHoverDuringViewChange(provinceBounds)) {
@@ -844,6 +946,7 @@
       activeCityName = getFeatureName(layer.feature);
       updateMapPath();
       refreshAdministrativeStyles();
+      saveProgress();
 
       const cityBounds = layer.getBounds();
       if (suppressHoverDuringViewChange(cityBounds)) {
@@ -1212,7 +1315,9 @@
       provinceLayer.bringToFront();
       resetBounds = countyLayer.getBounds().extend(cityLayer.getBounds()).extend(provinceLayer.getBounds());
       baseStrokeZoom = map.getZoom();
-      updateBoundaryWeights();
+      if (!restoreSavedProgress()) {
+        updateBoundaryWeights();
+      }
       setProgress(total, total);
     }
 
