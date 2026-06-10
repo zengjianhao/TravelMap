@@ -5,8 +5,11 @@ const CHINA_BOUNDS = [
   [3.408477, 73.498962],
   [53.558498, 135.087387]
 ];
-const RESET_VIEW_PADDING = [0, 0];
+const RESET_VIEW_PADDING = [18, 18];
+const ADMINISTRATIVE_VIEW_PADDING = [8, 8];
 const MAX_ZOOM_OFFSET = 5;
+const BASE_MIN_ZOOM = 0;
+const BASE_MAX_ZOOM = 18;
 const API_BASE = "https://cloudcenter.tianditu.gov.cn/api/portal";
 const MENU_URL = `${API_BASE}/region/menu`;
 const SHOW_TDT_REFERENCE_BORDER = false;
@@ -64,8 +67,8 @@ const map = L.map("map", {
   attributionControl: false,
   boxZoom: false,
   keyboard: false,
-  maxZoom: 18,
-  minZoom: 0,
+  maxZoom: BASE_MAX_ZOOM,
+  minZoom: BASE_MIN_ZOOM,
   preferCanvas: false,
   renderer: adminRenderer,
   wheelPxPerZoomLevel: 80,
@@ -149,19 +152,41 @@ function updateZoomControls() {
   zoomInButton.disabled = zoom >= map.getMaxZoom() - 0.001;
 }
 
-function applyZoomLimits() {
-  const resetZoom = map.getBoundsZoom(resetBounds, false, RESET_VIEW_PADDING);
-  map.setMinZoom(resetZoom);
-  map.setMaxZoom(resetZoom + MAX_ZOOM_OFFSET);
+function applyZoomLimits(bounds = resetBounds, padding = RESET_VIEW_PADDING) {
+  const minZoom = getUnboundedBoundsZoom(bounds, padding);
+  // Avoid setMinZoom/setMaxZoom here because they clamp the current view
+  // before the map can recenter for the new administrative level.
+  map.options.minZoom = minZoom;
+  map.options.maxZoom = minZoom + MAX_ZOOM_OFFSET;
+  map.fire("zoomlevelschange");
+  return minZoom;
 }
 
-function setResetView(animate) {
-  applyZoomLimits();
-  map.fitBounds(resetBounds, {
-    animate,
-    padding: RESET_VIEW_PADDING
+function getUnboundedBoundsZoom(bounds, padding) {
+  const currentMinZoom = map.options.minZoom;
+  const currentMaxZoom = map.options.maxZoom;
+  map.options.minZoom = BASE_MIN_ZOOM;
+  map.options.maxZoom = BASE_MAX_ZOOM;
+  try {
+    return map.getBoundsZoom(bounds, false, padding);
+  } finally {
+    map.options.minZoom = currentMinZoom;
+    map.options.maxZoom = currentMaxZoom;
+  }
+}
+
+function setBoundedView(bounds, padding) {
+  map.stop();
+  applyZoomLimits(bounds, padding);
+  map.fitBounds(bounds, {
+    animate: false,
+    padding
   });
   updateZoomControls();
+}
+
+function setResetView() {
+  setBoundedView(resetBounds, RESET_VIEW_PADDING);
 }
 
 function clearProvinceSelection() {
@@ -179,10 +204,7 @@ function clearProvinceSelection() {
 function fitAdministrativeLayer(layer) {
   const bounds = layer.getBounds();
   if (suppressHoverDuringViewChange(bounds)) {
-    map.fitBounds(bounds, {
-      animate: true,
-      padding: [8, 8]
-    });
+    setBoundedView(bounds, ADMINISTRATIVE_VIEW_PADDING);
   }
 }
 
@@ -201,13 +223,13 @@ function moveUpHierarchyLevel() {
 
   if (activeProvinceGb) {
     clearProvinceSelection();
-    setResetView(true);
+    setResetView();
     saveProgress();
   }
 }
 
 updateMapPath();
-setResetView(false);
+setResetView();
 
 zoomInButton.addEventListener("click", event => {
   event.currentTarget.blur();
@@ -605,12 +627,8 @@ function restoreSavedProgress() {
 
   const layerToRestore = cityLayerToRestore || provinceLayerToRestore;
   if (layerToRestore) {
-    applyZoomLimits();
-    map.fitBounds(layerToRestore.getBounds(), {
-      animate: false,
-      padding: [8, 8]
-    });
-    updateZoomControls();
+    const boundsToRestore = layerToRestore.getBounds();
+    setBoundedView(boundsToRestore, ADMINISTRATIVE_VIEW_PADDING);
   }
 
   return true;
@@ -948,10 +966,7 @@ function enterProvince(layer) {
 
   const provinceBounds = layer.getBounds();
   if (suppressHoverDuringViewChange(provinceBounds)) {
-    map.fitBounds(provinceBounds, {
-      animate: true,
-      padding: [8, 8]
-    });
+    setBoundedView(provinceBounds, ADMINISTRATIVE_VIEW_PADDING);
   }
 }
 
@@ -967,10 +982,7 @@ function enterCity(layer) {
 
   const cityBounds = layer.getBounds();
   if (suppressHoverDuringViewChange(cityBounds)) {
-    map.fitBounds(cityBounds, {
-      animate: true,
-      padding: [8, 8]
-    });
+    setBoundedView(cityBounds, ADMINISTRATIVE_VIEW_PADDING);
   }
 }
 
