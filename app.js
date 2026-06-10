@@ -121,10 +121,12 @@ function updateHierarchyNavigationControl() {
   upLevelButton.disabled = !activeProvinceGb && !activeCityGb;
 }
 
+function getCurrentPathParts() {
+  return [activeProvinceName, activeCityName].filter(Boolean);
+}
+
 function updateMapPath() {
-  const parts = ["中国"];
-  if (activeProvinceName) parts.push(activeProvinceName);
-  if (activeCityName) parts.push(activeCityName);
+  const parts = getCurrentPathParts();
 
   mapPath.replaceChildren();
   parts.forEach((part, index) => {
@@ -672,7 +674,7 @@ function waitForNextPaint() {
 }
 
 function getCurrentPathText() {
-  return ["中国", activeProvinceName, activeCityName].filter(Boolean).join("-");
+  return getCurrentPathParts().join("-") || "中国";
 }
 
 function getImageFileName() {
@@ -817,7 +819,9 @@ async function renderExportMapSvg(width, height, scale) {
 }
 
 function drawMapPath(ctx, width, height) {
-  const parts = ["中国", activeProvinceName, activeCityName].filter(Boolean);
+  const parts = getCurrentPathParts();
+  if (!parts.length) return;
+
   const tokens = parts.flatMap((part, index) => {
     const item = {
       color: index === parts.length - 1 ? "#344054" : "#748196",
