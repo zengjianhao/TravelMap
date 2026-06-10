@@ -1062,7 +1062,6 @@ function setupCityInteractions(feature, layer) {
       }
       closeLayerGroupTooltips(cityLayer, layer);
       layer.openTooltip();
-      layer.bringToFront();
     },
     tooltipopen: () => {
       if (isHoverSuppressed || !activeProvinceGb || activeCityGb || !isFeatureVisibleInActiveProvince(feature, "city")) {

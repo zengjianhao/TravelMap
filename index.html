@@ -14,38 +14,37 @@
 <body>
   <div id="app">
     <div id="map-shell">
-      <h1 id="page-title">足迹地图</h1>
       <div id="map-frame">
         <div id="progress" aria-hidden="true"><span></span></div>
-        <div id="map-controls" aria-hidden="false">
-          <button class="map-control" id="zoom-in" type="button" aria-label="Zoom in" title="放大">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.2"></path>
-            </svg>
-          </button>
-          <button class="map-control" id="zoom-out" type="button" aria-label="Zoom out" title="缩小">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.2"></path>
-            </svg>
-          </button>
-          <button class="map-control" id="up-level-map" type="button" aria-label="Back to parent map level" title="回到上一层级" disabled>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M19 12H5m0 0 6-6M5 12l6 6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
-            </svg>
-          </button>
-          <button class="map-control" id="clear-coverage" type="button" aria-label="Clear all colored regions" title="清除上色" disabled>
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
-            </svg>
-          </button>
-          <button class="map-control" id="download-image" type="button" aria-label="Download current map image" title="下载图片">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 3v10m0 0 4-4m-4 4-4-4M5 17v3h14v-3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
-            </svg>
-          </button>
-        </div>
         <div id="map" aria-label="Blank China county-level administrative map"></div>
         <div id="map-path" aria-label="当前地图路径"></div>
+      </div>
+      <div id="map-controls" aria-hidden="false">
+        <button class="map-control" id="zoom-in" type="button" aria-label="Zoom in" data-tooltip="Zoom In">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.2"></path>
+          </svg>
+        </button>
+        <button class="map-control" id="zoom-out" type="button" aria-label="Zoom out" data-tooltip="Zoom Out">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 12h14" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="2.2"></path>
+          </svg>
+        </button>
+        <button class="map-control" id="up-level-map" type="button" aria-label="Back to parent map level" data-tooltip="Back" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19 12H5m0 0 6-6M5 12l6 6" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+          </svg>
+        </button>
+        <button class="map-control" id="clear-coverage" type="button" aria-label="Clear all colored regions" data-tooltip="Clear Coverage" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+          </svg>
+        </button>
+        <button class="map-control" id="download-image" type="button" aria-label="Download current map image" data-tooltip="Download Image">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3v10m0 0 4-4m-4 4-4-4M5 17v3h14v-3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+          </svg>
+        </button>
       </div>
     </div>
   </div>
